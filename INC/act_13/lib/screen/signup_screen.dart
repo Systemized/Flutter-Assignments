@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'package:confetti/confetti.dart';
@@ -13,7 +15,7 @@ class SignupScreen extends StatefulWidget {
   State<SignupScreen> createState() => _SignupScreenState();
 }
 
-class _SignupScreenState extends State<SignupScreen> {
+class _SignupScreenState extends State<SignupScreen> with TickerProviderStateMixin {
   final _formKey = GlobalKey<FormState>();
 
   final TextEditingController _nameController = TextEditingController();
@@ -43,6 +45,21 @@ class _SignupScreenState extends State<SignupScreen> {
   // Confetti for milestones
   late final ConfettiController _milestoneConfetti;
 
+  // Animation controllers for per-field bounce & shake
+  final Map<String, AnimationController> _bounceControllers = {};
+  final Map<String, AnimationController> _shakeControllers = {};
+  final Map<String, Animation<double>> _shakeAnimations = {};
+
+  // Track valid state and errors
+  final Map<String, bool> _isFieldValid = {};
+  final Map<String, String?> _fieldErrors = {};
+
+  // Keys for fields to position tooltips
+  final Map<String, GlobalKey> _fieldKeys = {};
+
+  // Overlay entries for tooltips
+  final Map<String, OverlayEntry?> _tooltips = {};
+
   @override
   void dispose() {
     _nameController.dispose();
@@ -53,8 +70,23 @@ class _SignupScreenState extends State<SignupScreen> {
 
     _dobController.dispose();
 
+    // dispose milestone confetti
     _milestoneConfetti.dispose();
 
+    // dispose per-field animation controllers and any tooltips/timers
+    for (final f in ['name', 'email', 'password', 'dob']) {
+      try {
+        _bounceControllers[f]?.dispose();
+      } catch (_) {}
+      try {
+        _shakeControllers[f]?.dispose();
+      } catch (_) {}
+      _removeTooltip(f);
+      _tooltipTimers[f]?.cancel();
+      _tooltipTimers[f] = null;
+    }
+
+    // remove text listeners
     _nameController.removeListener(_updateProgressFromListeners);
     _emailController.removeListener(_updateProgressFromListeners);
     _passwordController.removeListener(_updatePasswordAndProgress);
@@ -70,13 +102,169 @@ class _SignupScreenState extends State<SignupScreen> {
     _milestoneConfetti = ConfettiController(duration: const Duration(seconds: 1));
 
     // update progress & strength as user types
-    _nameController.addListener(_updateProgressFromListeners);
-    _emailController.addListener(_updateProgressFromListeners);
-    _passwordController.addListener(_updatePasswordAndProgress);
-    _dobController.addListener(_updateProgressFromListeners);
+    // set up per-field keys and animation controllers
+    final fields = ['name', 'email', 'password', 'dob'];
+    for (final f in fields) {
+      _fieldKeys[f] = GlobalKey();
+      _tooltips[f] = null;
+      _isFieldValid[f] = false;
+
+      _bounceControllers[f] = AnimationController(
+        vsync: this,
+        duration: const Duration(milliseconds: 450),
+      );
+
+      _shakeControllers[f] = AnimationController(
+        vsync: this,
+        duration: const Duration(milliseconds: 420),
+      );
+
+      // build the shake animation (offsets)
+      _shakeAnimations[f] = TweenSequence<double>([
+        TweenSequenceItem(tween: Tween(begin: 0.0, end: -8.0), weight: 1),
+        TweenSequenceItem(tween: Tween(begin: -8.0, end: 8.0), weight: 2),
+        TweenSequenceItem(tween: Tween(begin: 8.0, end: -6.0), weight: 2),
+        TweenSequenceItem(tween: Tween(begin: -6.0, end: 6.0), weight: 2),
+        TweenSequenceItem(tween: Tween(begin: 6.0, end: -3.0), weight: 2),
+        TweenSequenceItem(tween: Tween(begin: -3.0, end: 3.0), weight: 2),
+        TweenSequenceItem(tween: Tween(begin: 3.0, end: 0.0), weight: 2),
+      ]).animate(CurvedAnimation(parent: _shakeControllers[f]!, curve: Curves.easeInOut));
+    }
+
+    // listeners to validate and trigger bounce while typing
+    _nameController.addListener(() => _validateAndMaybeBounce('name'));
+    _emailController.addListener(() => _validateAndMaybeBounce('email'));
+    _passwordController.addListener(() {
+      _updatePasswordAndProgress();
+      _validateAndMaybeBounce('password');
+    });
+    _dobController.addListener(() => _validateAndMaybeBounce('dob'));
 
     _updateProgressFromListeners();
     _updatePasswordAndProgress();
+  }
+
+  // Timers for tooltip auto-hide
+  final Map<String, Timer?> _tooltipTimers = {};
+
+  Animation<double> _bounceScale(String field) {
+    // scale from 0.94 -> 1.08 using an elastic curve
+    return Tween<double>(begin: 0.94, end: 1.08).animate(
+      CurvedAnimation(parent: _bounceControllers[field]!, curve: Curves.elasticOut),
+    );
+  }
+
+  void _validateAndMaybeBounce(String field) {
+    String? err;
+    final text = switch (field) {
+      'name' => _nameController.text,
+      'email' => _emailController.text,
+      'password' => _passwordController.text,
+      'dob' => _dobController.text,
+      _ => '',
+    };
+
+    if (field == 'name') err = _validateName(text);
+    if (field == 'email') err = _validateEmail(text);
+    if (field == 'password') err = _validatePassword(text);
+    if (field == 'dob') err = _validateDob(text);
+
+    final wasValid = _isFieldValid[field] ?? false;
+    final nowValid = err == null;
+
+    if (nowValid && !wasValid) {
+      // bounce
+      _bounceControllers[field]!.forward(from: 0.0);
+    }
+
+    _isFieldValid[field] = nowValid;
+    _fieldErrors[field] = err;
+    setState(() {});
+  }
+
+  String? _validateName(String? value) {
+    if (value == null || value.isEmpty) return 'What should we call you on this adventure?';
+    return null;
+  }
+
+  String? _validateEmail(String? value) {
+    if (value == null || value.isEmpty) return 'We need your email for adventure updates!';
+    if (!value.contains('@') || !value.contains('.')) return 'Oops! That doesn\'t look like a valid email';
+    return null;
+  }
+
+  String? _validatePassword(String? value) {
+    if (value == null || value.isEmpty) return 'Every adventurer needs a secret password!';
+    if (value.length < 6) return 'Make it stronger! At least 6 characters';
+    return null;
+  }
+
+  String? _validateDob(String? value) {
+    if (value == null || value.isEmpty) return 'When did your adventure begin?';
+    return null;
+  }
+
+  void _triggerShake(String field, String message) {
+    // start shake
+    _shakeControllers[field]!.forward(from: 0.0);
+
+    // show tooltip
+    _showTooltip(field, message);
+  }
+
+  void _showTooltip(String field, String message) {
+    // remove existing tooltip for field
+    _removeTooltip(field);
+
+    final key = _fieldKeys[field];
+    if (key == null) return;
+
+    final contextKey = key.currentContext;
+    if (contextKey == null) return;
+
+    final renderBox = contextKey.findRenderObject() as RenderBox?;
+    if (renderBox == null) return;
+
+    final offset = renderBox.localToGlobal(Offset.zero);
+
+    final entry = OverlayEntry(
+      builder: (context) => Positioned(
+        left: offset.dx + 8,
+        top: offset.dy - 44,
+        child: Material(
+          color: Colors.transparent,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.red.shade700,
+              borderRadius: BorderRadius.circular(8),
+              boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 6)],
+            ),
+            child: Text(
+              message,
+              style: const TextStyle(color: Colors.white),
+            ),
+          ),
+        ),
+      ),
+    );
+
+  _tooltips[field] = entry;
+  Overlay.of(context).insert(entry);
+
+    _tooltipTimers[field]?.cancel();
+    _tooltipTimers[field] = Timer(const Duration(seconds: 2), () {
+      _removeTooltip(field);
+    });
+  }
+
+  void _removeTooltip(String field) {
+    try {
+      _tooltipTimers[field]?.cancel();
+      _tooltipTimers[field] = null;
+      _tooltips[field]?.remove();
+      _tooltips[field] = null;
+    } catch (_) {}
   }
 
   void _updateProgressFromListeners() {
@@ -122,10 +310,15 @@ class _SignupScreenState extends State<SignupScreen> {
   void _checkMilestone() {
     int percent = (_progress * 100).round();
     int milestone = 0;
-    if (percent >= 100) milestone = 100;
-    else if (percent >= 75) milestone = 75;
-    else if (percent >= 50) milestone = 50;
-    else if (percent >= 25) milestone = 25;
+    if (percent >= 100) {
+      milestone = 100;
+    } else if (percent >= 75) {
+      milestone = 75;
+    } else if (percent >= 50) {
+      milestone = 50;
+    } else if (percent >= 25) {
+      milestone = 25;
+    }
 
     if (milestone > _lastMilestone && milestone > 0) {
       _lastMilestone = milestone;
@@ -168,40 +361,49 @@ class _SignupScreenState extends State<SignupScreen> {
   }
 
   void _submitForm() {
-    if (_formKey.currentState!.validate()) {
-      setState(() {
-        _isLoading = true;
-      });
+    // run per-field validation and trigger shake/tooltips for invalid fields
+    bool allGood = true;
 
-      // Simulate API call
+    final nameErr = _validateName(_nameController.text);
+    final emailErr = _validateEmail(_emailController.text);
+    final passwordErr = _validatePassword(_passwordController.text);
+    final dobErr = _validateDob(_dobController.text);
 
-      Future.delayed(const Duration(seconds: 2), () {
-        if (!mounted) return; // Check if the widget is still in the tree
+    if (nameErr != null) { allGood = false; _triggerShake('name', nameErr); }
+    if (emailErr != null) { allGood = false; _triggerShake('email', emailErr); }
+    if (passwordErr != null) { allGood = false; _triggerShake('password', passwordErr); }
+    if (dobErr != null) { allGood = false; _triggerShake('dob', dobErr); }
 
-        setState(() {
-          _isLoading = false;
-        });
+    // run the Form validation to show inline errors as well
+    _formKey.currentState!.validate();
 
-        // Build badges
-        final List<String> badges = [];
-        if (_passwordStrength >= 3) badges.add('Strong Password Master');
-        final now = DateTime.now();
-        if (now.hour < 12) badges.add('The Early Bird Special');
-        if (_progress >= 1.0) badges.add('Profile Completer - Filled all fields');
+    if (!allGood) return;
 
-        Navigator.pushReplacement(
-          context,
+    setState(() { _isLoading = true; });
 
-          MaterialPageRoute(
-            builder: (context) => SuccessScreen(
-              userName: _nameController.text,
-              avatar: _selectedAvatar,
-              badges: badges,
-            ),
+    // Simulate API call
+    Future.delayed(const Duration(seconds: 2), () {
+      if (!mounted) return;
+      setState(() { _isLoading = false; });
+
+      // Build badges
+      final List<String> badges = [];
+      if (_passwordStrength >= 3) badges.add('Strong Password Master');
+      final now = DateTime.now();
+      if (now.hour < 12) badges.add('The Early Bird Special');
+      if (_progress >= 1.0) badges.add('Profile Completer - Filled all fields');
+
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (context) => SuccessScreen(
+            userName: _nameController.text,
+            avatar: _selectedAvatar,
+            badges: badges,
           ),
-        );
-      });
-    }
+        ),
+      );
+    });
   }
 
 
@@ -333,137 +535,131 @@ class _SignupScreenState extends State<SignupScreen> {
 
                 // Name Field
                 _buildTextField(
+                  fieldName: 'name',
                   controller: _nameController,
-
                   label: 'Adventure Name',
-
                   icon: Icons.person,
-
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'What should we call you on this adventure?';
-                    }
-
-                    return null;
-                  },
+                  validator: _validateName,
                 ),
 
                 const SizedBox(height: 20),
 
                 // Email Field
                 _buildTextField(
+                  fieldName: 'email',
                   controller: _emailController,
-
                   label: 'Email Address',
-
                   icon: Icons.email,
-
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'We need your email for adventure updates!';
-                    }
-
-                    if (!value.contains('@') || !value.contains('.')) {
-                      return 'Oops! That doesn\'t look like a valid email';
-                    }
-
-                    return null;
-                  },
+                  validator: _validateEmail,
                 ),
 
                 const SizedBox(height: 20),
 
                 // DOB w/Calendar
-                TextFormField(
-                  controller: _dobController,
-
-                  readOnly: true,
-
-                  onTap: _selectDate,
-
-                  decoration: InputDecoration(
-                    labelText: 'Date of Birth',
-
-                    prefixIcon: const Icon(
-                      Icons.calendar_today,
-                      color: Colors.deepPurple,
-                    ),
-
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-
-                    filled: true,
-
-                    fillColor: Colors.grey[50],
-
-                    suffixIcon: IconButton(
-                      icon: const Icon(Icons.date_range),
-
-                      onPressed: _selectDate,
-                    ),
-                  ),
-
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'When did your adventure begin?';
-                    }
-
-                    return null;
+                // Date field wrapped with animations
+                AnimatedBuilder(
+                  animation: _shakeControllers['dob']!,
+                  builder: (context, child) {
+                    final offset = _shakeAnimations['dob']!.value;
+                    return Transform.translate(
+                      offset: Offset(offset, 0),
+                      child: ScaleTransition(
+                        scale: _bounceScale('dob'),
+                        child: Container(
+                          key: _fieldKeys['dob'],
+                          child: TextFormField(
+                            controller: _dobController,
+                            readOnly: true,
+                            onTap: _selectDate,
+                            decoration: InputDecoration(
+                              labelText: 'Date of Birth',
+                              prefixIcon: const Icon(
+                                Icons.calendar_today,
+                                color: Colors.deepPurple,
+                              ),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              filled: true,
+                              fillColor: Colors.grey[50],
+                              suffixIcon: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    icon: const Icon(Icons.date_range),
+                                    onPressed: _selectDate,
+                                  ),
+                                  if (_isFieldValid['dob'] == true)
+                                    ScaleTransition(
+                                      scale: _bounceScale('dob'),
+                                      child: const Icon(Icons.check_circle, color: Colors.green),
+                                    ),
+                                ],
+                              ),
+                            ),
+                            validator: _validateDob,
+                          ),
+                        ),
+                      ),
+                    );
                   },
                 ),
 
                 const SizedBox(height: 20),
 
                 // Pswd Field w/ Toggle
-                TextFormField(
-                  controller: _passwordController,
-
-                  obscureText: !_isPasswordVisible,
-
-                  decoration: InputDecoration(
-                    labelText: 'Secret Password',
-
-                    prefixIcon: const Icon(
-                      Icons.lock,
-                      color: Colors.deepPurple,
-                    ),
-
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-
-                    filled: true,
-
-                    fillColor: Colors.grey[50],
-
-                    suffixIcon: IconButton(
-                      icon: Icon(
-                        _isPasswordVisible
-                            ? Icons.visibility
-                            : Icons.visibility_off,
-
-                        color: Colors.deepPurple,
+                // Password field with animations
+                AnimatedBuilder(
+                  animation: _shakeControllers['password']!,
+                  builder: (context, child) {
+                    final offset = _shakeAnimations['password']!.value;
+                    return Transform.translate(
+                      offset: Offset(offset, 0),
+                      child: ScaleTransition(
+                        scale: _bounceScale('password'),
+                        child: Container(
+                          key: _fieldKeys['password'],
+                          child: TextFormField(
+                            controller: _passwordController,
+                            obscureText: !_isPasswordVisible,
+                            decoration: InputDecoration(
+                              labelText: 'Secret Password',
+                              prefixIcon: const Icon(
+                                Icons.lock,
+                                color: Colors.deepPurple,
+                              ),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              filled: true,
+                              fillColor: Colors.grey[50],
+                              suffixIcon: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    icon: Icon(
+                                      _isPasswordVisible ? Icons.visibility : Icons.visibility_off,
+                                      color: Colors.deepPurple,
+                                    ),
+                                    onPressed: () {
+                                      setState(() {
+                                        _isPasswordVisible = !_isPasswordVisible;
+                                      });
+                                    },
+                                  ),
+                                  if (_isFieldValid['password'] == true)
+                                    ScaleTransition(
+                                      scale: _bounceScale('password'),
+                                      child: const Icon(Icons.check_circle, color: Colors.green),
+                                    ),
+                                ],
+                              ),
+                            ),
+                            validator: _validatePassword,
+                          ),
+                        ),
                       ),
-
-                      onPressed: () {
-                        setState(() {
-                          _isPasswordVisible = !_isPasswordVisible;
-                        });
-                      },
-                    ),
-                  ),
-
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Every adventurer needs a secret password!';
-                    }
-
-                    if (value.length < 6) {
-                      return 'Make it stronger! At least 6 characters';
-                    }
-
-                    return null;
+                    );
                   },
                 ),
 
@@ -569,30 +765,44 @@ class _SignupScreenState extends State<SignupScreen> {
   }
 
   Widget _buildTextField({
+    required String fieldName,
     required TextEditingController controller,
-
     required String label,
-
     required IconData icon,
-
     required String? Function(String?) validator,
   }) {
-    return TextFormField(
-      controller: controller,
-
-      decoration: InputDecoration(
-        labelText: label,
-
-        prefixIcon: Icon(icon, color: Colors.deepPurple),
-
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-
-        filled: true,
-
-        fillColor: Colors.grey[50],
-      ),
-
-      validator: validator,
+    // Animated wrapper: shake + bounce + inline check icon
+    return AnimatedBuilder(
+      animation: _shakeControllers[fieldName]!,
+      builder: (context, child) {
+        final offset = _shakeAnimations[fieldName]!.value;
+        return Transform.translate(
+          offset: Offset(offset, 0),
+          child: ScaleTransition(
+            scale: _bounceScale(fieldName),
+            child: Container(
+              key: _fieldKeys[fieldName],
+              child: TextFormField(
+                controller: controller,
+                decoration: InputDecoration(
+                  labelText: label,
+                  prefixIcon: Icon(icon, color: Colors.deepPurple),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  filled: true,
+                  fillColor: Colors.grey[50],
+                  suffixIcon: _isFieldValid[fieldName] == true
+                      ? ScaleTransition(
+                          scale: _bounceScale(fieldName),
+                          child: const Icon(Icons.check_circle, color: Colors.green),
+                        )
+                      : null,
+                ),
+                validator: validator,
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
