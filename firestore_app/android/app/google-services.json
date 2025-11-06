@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "1036368772231",
+    "project_id": "inventory-app-vincent",
+    "storage_bucket": "inventory-app-vincent.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1036368772231:android:3db6797849d5f606fc8c22",
+        "android_client_info": {
+          "package_name": "com.example.firestore_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCStp9unrrSGYCm6v4W4F_PD0A-jttiTxk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1036368772231:android:c629d8fe8f0f6dc6fc8c22",
+        "android_client_info": {
+          "package_name": "com.example.inclass15"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCStp9unrrSGYCm6v4W4F_PD0A-jttiTxk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
