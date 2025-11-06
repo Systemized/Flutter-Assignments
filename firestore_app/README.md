@@ -1,16 +1,23 @@
 # firestore_app
 
-A new Flutter project.
+A Flutter Inventory Management App with Firestore.
+
+
+### Features Implemented:
+- Advanced Search & Filtering:
+    - A search bar that filters the list by item name 
+    - Filter chips or a dropdown to filter by stock status (e.g., "Out of Stock").
+
+- Data Insights Dashboard:
+    - A separate screen showing key statistics:
+        - Total number of unique items.
+        - Total value of all inventory (sum of quantity * price).
+        - A list of "out-of-stock" items.
 
 ## Getting Started
 
-This project is a starting point for a Flutter application.
+```bash
+flutter pub get
 
-A few resources to get you started if this is your first Flutter project:
-
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+flutter run
+```
